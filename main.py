@@ -2,13 +2,11 @@ import logging
 import os
 import signal
 import sqlite3  # Import for SQLite database operations
-import sys
 import time
 import warnings
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from tigeropen.common.consts import BarPeriod, Language, Market, QuoteRight
