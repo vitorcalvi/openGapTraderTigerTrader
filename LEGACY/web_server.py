@@ -1,8 +1,10 @@
 
-from flask import Flask, render_template, send_from_directory
 import os
 import threading
 import time
+
+from flask import Flask, render_template, send_from_directory
+
 from main import YahooFinanceGapTrader
 
 app = Flask(__name__, template_folder='.')
