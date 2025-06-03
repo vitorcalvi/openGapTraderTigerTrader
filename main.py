@@ -30,22 +30,29 @@ class YahooFinanceGapTrader:
     def __init__(self, tiger_id: str = None, account: str = None, is_sandbox: bool = None):
         self.tiger_id = tiger_id or os.getenv('TIGER_ID')
         self.account = account or os.getenv('TIGER_ACCOUNT')
+        # Ensure boolean parsing for IS_SANDBOX
         self.is_sandbox = is_sandbox if is_sandbox is not None else os.getenv('IS_SANDBOX', 'True').lower() == 'true'
         self.client_config = self._setup_tiger_api()
         self.quote_client = QuoteClient(self.client_config)
         self.trade_client = TradeClient(self.client_config)
-        self.min_gap_percent = float(os.getenv('MIN_GAP_PERCENT', '1.5'))
-        self.max_gap_percent = float(os.getenv('MAX_GAP_PERCENT', '15.0'))
-        self.min_volume = int(os.getenv('MIN_VOLUME', '50000'))
-        self.min_price = float(os.getenv('MIN_PRICE', '5.0'))
-        self.position_size = float(os.getenv('POSITION_SIZE', '5000'))
-        self.max_positions = int(os.getenv('MAX_POSITIONS', '10'))
-        self.stop_loss_pct = float(os.getenv('STOP_LOSS_PCT', '0.05'))
-        self.take_profit_pct = float(os.getenv('TAKE_PROFIT_PCT', '0.08'))
-        self.scan_interval = int(os.getenv('SCAN_INTERVAL', '600'))
-        self.max_scan_attempts = int(os.getenv('MAX_SCAN_ATTEMPTS', '0'))
-        self.market_hours_only = os.getenv('MARKET_HOURS_ONLY', 'False').lower() == 'true'
-        self.gap_prone_symbols = self._get_comprehensive_symbol_list()
+
+        # Robust parsing for numeric environment variables
+        self.min_gap_percent = float(os.getenv('MIN_GAP_PERCENT', '1.5').strip().strip('"'))
+        self.max_gap_percent = float(os.getenv('MAX_GAP_PERCENT', '15.0').strip().strip('"'))
+        self.min_volume = int(os.getenv('MIN_VOLUME', '50000').strip().strip('"'))
+        self.min_price = float(os.getenv('MIN_PRICE', '5.0').strip().strip('"'))
+        self.position_size = float(os.getenv('POSITION_SIZE', '5000').strip().strip('"'))
+        self.max_positions = int(os.getenv('MAX_POSITIONS', '10').strip().strip('"'))
+        self.stop_loss_pct = float(os.getenv('STOP_LOSS_PCT', '0.05').strip().strip('"'))
+        self.take_profit_pct = float(os.getenv('TAKE_PROFIT_PCT', '0.08').strip().strip('"'))
+        self.scan_interval = int(os.getenv('SCAN_INTERVAL', '600').strip().strip('"'))
+        self.max_scan_attempts = int(os.getenv('MAX_SCAN_ATTEMPTS', '0').strip().strip('"'))
+        self.market_hours_only = os.getenv('MARKET_HOURS_ONLY', 'False').lower().strip().strip('"') == 'true'
+        
+        # Initialize symbol-to-exchange map
+        self.symbol_exchange_map = {}
+        self.gap_prone_symbols = self._get_comprehensive_symbol_list() # This will populate the map internally
+
         self.running = False
         self.scan_count = 0
         self.last_successful_trade = None
@@ -64,7 +71,7 @@ class YahooFinanceGapTrader:
         self._setup_database()
 
         self.logger.info(f"🔧 Yahoo Finance Gap Trader initialized")
-        self.logger.info(f"📊 Monitoring {len(self.gap_prone_symbols)} symbols")
+        self.logger.info(f"📊 Monitoring {len(self.gap_prone_symbols)} symbols across various markets")
         self.logger.info(f"⏱️ Scan interval: {self.scan_interval} seconds")
         self.logger.info(f"🎯 Gap range: {self.min_gap_percent}% - {self.max_gap_percent}%")
         self.logger.info(f"💰 Position size: ${self.position_size}")
@@ -74,11 +81,16 @@ class YahooFinanceGapTrader:
     def _setup_tiger_api(self):
         """Configures the Tiger Open API client."""
         client_config = TigerOpenClientConfig()
-        client_config.private_key = os.getenv('TIGER_RSA_PRIVATE_KEY_PYTHON', '').replace('\\n', '\n')
+        # Strip quotes and newlines from the private key string
+        private_key_raw = os.getenv('TIGER_RSA_PRIVATE_KEY_PYTHON', '').strip().strip('"')
+        client_config.private_key = private_key_raw.replace('\\n', '\n')
+
         client_config.tiger_id = self.tiger_id
         client_config.account = self.account
         client_config.language = Language.en_US
-        client_config.timeout = int(os.getenv('API_TIMEOUT', '30'))
+        # Robust parsing for API_TIMEOUT
+        api_timeout_str = os.getenv('API_TIMEOUT', '30').strip().strip('"')
+        client_config.timeout = int(api_timeout_str)
         if self.is_sandbox:
             client_config.sandbox_debug = True
         return client_config
@@ -166,29 +178,43 @@ class YahooFinanceGapTrader:
             self.logger.info("✅ SQLite database connection closed.")
 
     def _get_comprehensive_symbol_list(self) -> List[str]:
-        """Retrieves the list of symbols to monitor from environment variables or a default list."""
-        universe_str = os.getenv('GAP_PRONE_SYMBOLS', '')
-        if universe_str:
-            symbols = [symbol.strip() for symbol in universe_str.split(',')]
-            return symbols
-        return [
-            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX',
-            'CRM', 'ADBE', 'ORCL', 'INTC', 'AMD', 'QCOM', 'AVGO', 'TXN',
-            'PLTR', 'RBLX', 'ROKU', 'PTON', 'SNAP', 'PINS', 'SPOT', 'SQ',
-            'COIN', 'HOOD', 'SOFI', 'UPST', 'AFRM', 'OPEN', 'Z', 'ZG',
-            'MRNA', 'BNTX', 'NVAX', 'GILD', 'REGN', 'VRTX', 'BIIB', 'AMGN',
-            'GILD', 'ISRG', 'DXCM', 'ALGN', 'ILMN', 'VRTX', 'REGN',
-            'DECK', 'NKE', 'LULU', 'TJX', 'M', 'JWN', 'GPS', 'ANF', 'AEO',
-            'URBN', 'COST', 'WMT', 'TGT', 'HD', 'LOW', 'BBY', 'BBBY',
-            'AAL', 'DAL', 'UAL', 'LUV', 'JBLU', 'ALK', 'SAVE', 'MESA',
-            'XOM', 'CVX', 'COP', 'SLB', 'HAL', 'EOG', 'PXD', 'OXY',
-            'DVN', 'FANG', 'MRO', 'APA', 'HES', 'VLO', 'MPC', 'PSX',
-            'JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'BK', 'STT', 'SCHW',
-            'USB', 'PNC', 'TFC', 'COF', 'AXP', 'DFS', 'SYF',
-            'MSTR', 'RIOT', 'MARA', 'COIN', 'HUT', 'BITF', 'SOS', 'EBON',
-            'QQQ', 'SPY', 'IWM', 'XLF', 'XLE', 'XLK', 'XBI', 'ARKK',
-            'UBER', 'LYFT', 'DASH', 'ABNB', 'TWLO', 'ZM', 'DOCU', 'YELP'
-        ]
+        """
+        Retrieves the list of symbols to monitor from environment variables
+        for specified markets and populates the symbol_exchange_map.
+        """
+        all_symbols = []
+        # Define default symbols and their exchanges/currencies for each market
+        # These are illustrative; users should populate their .env with actual symbols.
+        market_configs = {
+            'HK': {'env_var': 'GAP_PRONE_SYMBOLS_HK', 'default_symbols': ['0005.HK', '0700.HK'], 'exchange': 'HKEX', 'currency': 'HKD'},
+            'SG': {'env_var': 'GAP_PRONE_SYMBOLS_SG', 'default_symbols': ['D05.SG', 'U11.SG'], 'exchange': 'SGX', 'currency': 'SGD'},
+            'ASX': {'env_var': 'GAP_PRONE_SYMBOLS_ASX', 'default_symbols': ['CBA.AX', 'BHP.AX'], 'exchange': 'ASX', 'currency': 'AUD'},
+            'CHINA_A_SHARES_SSE': {'env_var': 'GAP_PRONE_SYMBOLS_SSE', 'default_symbols': ['600000.SS', '601398.SS'], 'exchange': 'SSE', 'currency': 'CNY'},
+            'CHINA_A_SHARES_SZSE': {'env_var': 'GAP_PRONE_SYMBOLS_SZSE', 'default_symbols': ['000001.SZ', '000002.SZ'], 'exchange': 'SZSE', 'currency': 'CNY'},
+            # You can add US stocks back if desired, e.g.:
+            # 'US': {'env_var': 'GAP_PRONE_SYMBOLS_US', 'default_symbols': ['AAPL', 'MSFT'], 'exchange': 'SMART', 'currency': 'USD'}
+        }
+
+        for market_key, config in market_configs.items():
+            symbols_str = os.getenv(config['env_var'], '').strip().strip('"')
+            if symbols_str:
+                market_symbols = [s.strip() for s in symbols_str.split(',') if s.strip()]
+            else:
+                market_symbols = config['default_symbols']
+            
+            if market_symbols:
+                self.logger.info(f"Loading symbols for {market_key} ({config['exchange']}): {', '.join(market_symbols)}")
+
+            for symbol in market_symbols:
+                # Store symbol, exchange, and currency in the map
+                self.symbol_exchange_map[symbol] = {
+                    'exchange': config['exchange'],
+                    'currency': config['currency']
+                }
+                all_symbols.append(symbol)
+        
+        # Remove duplicates and return a clean list of symbols
+        return list(set(all_symbols))
 
     def get_yahoo_finance_data(self, symbols: List[str]) -> Dict:
         """Fetches historical data for given symbols from Yahoo Finance."""
@@ -220,7 +246,7 @@ class YahooFinanceGapTrader:
                                 all_data[symbol] = bars
                         time.sleep(0.1) # Small delay to respect Yahoo Finance limits
                     except Exception as e:
-                        self.logger.error(f"${symbol}: possibly delisted; no price data found (period=1wk) (Yahoo error = \"{e}\")")
+                        self.logger.error(f"${symbol}: possibly delisted or no price data found (period=1wk) (Yahoo error = \"{e}\")")
                         continue
                 if i > 0 and i % 50 == 0:
                     self.logger.info(f"📊 Processed {i}/{len(symbols)} symbols...")
@@ -352,8 +378,18 @@ class YahooFinanceGapTrader:
         contract = Contract()
         contract.symbol = symbol
         contract.sec_type = 'STK'
-        contract.exchange = 'SMART' # Or appropriate exchange like 'NASDAQ', 'NYSE'
-        contract.currency = 'USD'
+        
+        # Get exchange and currency from the pre-populated map
+        market_info = self.symbol_exchange_map.get(symbol)
+        if market_info:
+            contract.exchange = market_info['exchange']
+            contract.currency = market_info['currency']
+        else:
+            # Fallback for symbols not found in the map (e.g., if dynamically added or error)
+            self.logger.warning(f"Symbol {symbol} not found in exchange map, defaulting to SMART/USD.")
+            contract.exchange = 'SMART'
+            contract.currency = 'USD'
+            
         return contract
 
     def place_gap_trade(self, opportunity: Dict) -> Optional[Dict]:
@@ -430,7 +466,11 @@ class YahooFinanceGapTrader:
             self.logger.error(f"❌ Error placing stop loss for {contract.symbol}: {e}")
 
     def is_market_hours(self) -> bool:
-        """Checks if the current time is within NYSE market hours."""
+        """Checks if the current time is within NYSE market hours.
+        NOTE: This function currently assumes NYSE hours. For international markets,
+        you would need to implement more sophisticated logic considering different timezones
+        and market open/close times for HKEX, SGX, ASX, SSE, SZSE.
+        """
         if not self.market_hours_only:
             return True
         now = datetime.now()
@@ -554,7 +594,7 @@ class YahooFinanceGapTrader:
 
         self.logger.info("🚀 Starting continuous gap monitoring with Yahoo Finance...")
         self.logger.info("=" * 80)
-        self.logger.info(f"📊 Symbols: {len(self.gap_prone_symbols)}")
+        self.logger.info(f"📊 Symbols: {len(self.gap_prone_symbols)} from specified markets")
         self.logger.info(f"⏱️ Scan interval: {self.scan_interval} seconds")
         self.logger.info(f"🎯 Gap range: {self.min_gap_percent}% - {self.max_gap_percent}%")
         self.logger.info(f"💰 Position size: ${self.position_size}")
