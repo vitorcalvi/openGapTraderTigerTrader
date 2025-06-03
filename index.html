@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dynamic Market Status App</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 15px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #2c3e50, #34495e);
+        color: white;
+        padding: 30px;
+        text-align: center;
+      }
+
+      .header h1 {
+        font-size: 2.5rem;
+        margin-bottom: 10px;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      .current-time {
+        font-size: 1.2rem;
+        opacity: 0.9;
+        margin-top: 15px;
+      }
+
+      .controls {
+        padding: 20px 30px;
+        background: #f8f9fa;
+        border-bottom: 1px solid #dee2e6;
+      }
+
+      .control-group {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .control-group input,
+      .control-group select,
+      .control-group button {
+        padding: 10px 15px;
+        border: 2px solid #ddd;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+
+      .control-group button {
+        background: #007bff;
+        color: white;
+        border-color: #007bff;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .control-group button:hover {
+        background: #0056b3;
+        transform: translateY(-2px);
+      }
+
+      .table-container {
+        padding: 30px;
+        overflow-x: auto;
+      }
+
+      .dynamic-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 0;
+        background: white;
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+      }
+
+      .dynamic-table th {
+        background: linear-gradient(135deg, #343a40, #495057);
+        color: white;
+        padding: 18px 15px;
+        text-align: center;
+        font-weight: 600;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      .dynamic-table td {
+        padding: 15px;
+        text-align: center;
+        border-bottom: 1px solid #f1f3f4;
+        transition: all 0.3s ease;
+      }
+
+      .dynamic-table tbody tr:hover {
+        background-color: #f8f9fa;
+        transform: scale(1.01);
+      }
+
+      .status-open {
+        background: linear-gradient(135deg, #28a745, #20c997) !important;
+        color: white !important;
+        font-weight: bold;
+        padding: 8px 16px;
+        border-radius: 20px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+      }
+
+      .status-closed {
+        background: linear-gradient(135deg, #dc3545, #e74c3c) !important;
+        color: white !important;
+        font-weight: bold;
+        padding: 8px 16px;
+        border-radius: 20px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+      }
+
+      .market-name {
+        font-weight: 600;
+        color: #2c3e50;
+      }
+
+      .market-time {
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        color: #6c757d;
+      }
+
+      .loading {
+        text-align: center;
+        padding: 40px;
+        color: #6c757d;
+        font-style: italic;
+      }
+
+      .stats {
+        display: flex;
+        justify-content: space-around;
+        padding: 20px 30px;
+        background: #f8f9fa;
+        border-top: 1px solid #dee2e6;
+      }
+
+      .stat-item {
+        text-align: center;
+      }
+
+      .stat-number {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #2c3e50;
+      }
+
+      .stat-label {
+        color: #6c757d;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🌍 Global Market Status Dashboard</h1>
+        <div class="current-time" id="currentTime">Loading...</div>
+      </div>
+
+      <div class="controls">
+        <div class="control-group">
+          <input
+            type="text"
+            id="marketName"
+            placeholder="Market Name (e.g., NASDAQ)"
+          />
+          <input
+            type="text"
+            id="timezone"
+            placeholder="Timezone (e.g., America/New_York)"
+          />
+          <input type="time" id="openTime" value="09:30" />
+          <input type="time" id="closeTime" value="16:00" />
+          <button onclick="addMarket()">Add Market</button>
+          <button onclick="clearAllMarkets()">Clear All</button>
+          <button onclick="exportData()">Export Data</button>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <div id="tableWrapper"></div>
+      </div>
+
+      <div class="stats">
+        <div class="stat-item">
+          <div class="stat-number" id="totalMarkets">0</div>
+          <div class="stat-label">Total Markets</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-number" id="openMarkets">0</div>
+          <div class="stat-label">Open Markets</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-number" id="closedMarkets">0</div>
+          <div class="stat-label">Closed Markets</div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      class DynamicMarketTable {
+        constructor() {
+          this.markets = this.loadDefaultMarkets();
+          this.tableColumns = [
+            { key: 'name', label: 'Market', type: 'text' },
+            { key: 'status', label: 'Status', type: 'status' },
+            { key: 'localOpenTime', label: 'Local Open', type: 'time' },
+            { key: 'localCloseTime', label: 'Local Close', type: 'time' },
+            { key: 'currentMarketTime', label: 'Market Time', type: 'time' },
+            { key: 'timezone', label: 'Timezone', type: 'text' },
+            { key: 'actions', label: 'Actions', type: 'actions' }
+          ];
+          this.init();
+        }
+
+        loadDefaultMarkets() {
+          return [
+            {
+              name: 'New York Stock Exchange',
+              timezone: 'America/New_York',
+              openHour: 9,
+              openMinute: 30,
+              closeHour: 16,
+              closeMinute: 0,
+              weekdays: [1, 2, 3, 4, 5]
+            },
+            {
+              name: 'London Stock Exchange',
+              timezone: 'Europe/London',
+              openHour: 8,
+              openMinute: 0,
+              closeHour: 16,
+              closeMinute: 30,
+              weekdays: [1, 2, 3, 4, 5]
+            },
+            {
+              name: 'Tokyo Stock Exchange',
+              timezone: 'Asia/Tokyo',
+              openHour: 9,
+              openMinute: 0,
+              closeHour: 15,
+              closeMinute: 0,
+              weekdays: [1, 2, 3, 4, 5]
+            },
+            {
+              name: 'Hong Kong Exchange',
+              timezone: 'Asia/Hong_Kong',
+              openHour: 9,
+              openMinute: 30,
+              closeHour: 16,
+              closeMinute: 0,
+              weekdays: [1, 2, 3, 4, 5]
+            }
+          ];
+        }
+
+        init() {
+          this.createTable();
+          this.updateCurrentTime();
+          this.updateTable();
+
+          setInterval(() => {
+            this.updateCurrentTime();
+            this.updateTable();
+          }, 1000);
+        }
+
+        createTable() {
+          const wrapper = document.getElementById('tableWrapper');
+
+          // Create table element
+          const table = document.createElement('table');
+          table.className = 'dynamic-table';
+          table.id = 'marketTable';
+
+          // Create header
+          const thead = document.createElement('thead');
+          const headerRow = document.createElement('tr');
+
+          this.tableColumns.forEach(column => {
+            const th = document.createElement('th');
+            th.textContent = column.label;
+            headerRow.appendChild(th);
+          });
+
+          thead.appendChild(headerRow);
+          table.appendChild(thead);
+
+          // Create body
+          const tbody = document.createElement('tbody');
+          tbody.id = 'marketTableBody';
+          table.appendChild(tbody);
+
+          wrapper.appendChild(table);
+        }
+
+        updateTable() {
+          const tbody = document.getElementById('marketTableBody');
+          if (!tbody) return;
+
+          // Clear existing rows
+          tbody.innerHTML = '';
+
+          if (this.markets.length === 0) {
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = this.tableColumns.length;
+            cell.className = 'loading';
+            cell.textContent =
+              'No markets added. Use the controls above to add markets.';
+            row.appendChild(cell);
+            tbody.appendChild(row);
+            this.updateStats(0, 0);
+            return;
+          }
+
+          let openCount = 0;
+
+          this.markets.forEach((market, index) => {
+            const row = document.createElement('tr');
+            const marketData = this.getMarketData(market);
+
+            if (marketData.isOpen) openCount++;
+
+            this.tableColumns.forEach(column => {
+              const cell = document.createElement('td');
+
+              switch (column.type) {
+                case 'text':
+                  cell.textContent =
+                    marketData[column.key] || market[column.key];
+                  if (column.key === 'name') {
+                    cell.className = 'market-name';
+                  }
+                  break;
+
+                case 'status':
+                  const statusSpan = document.createElement('span');
+                  statusSpan.textContent = marketData.isOpen
+                    ? 'OPEN'
+                    : 'CLOSED';
+                  statusSpan.className = marketData.isOpen
+                    ? 'status-open'
+                    : 'status-closed';
+                  cell.appendChild(statusSpan);
+                  break;
+
+                case 'time':
+                  cell.textContent = marketData[column.key];
+                  cell.className = 'market-time';
+                  break;
+
+                case 'actions':
+                  const deleteBtn = document.createElement('button');
+                  deleteBtn.textContent = '🗑️ Delete';
+                  deleteBtn.style.cssText = `
+                                    background: #dc3545;
+                                    color: white;
+                                    border: none;
+                                    padding: 5px 10px;
+                                    border-radius: 5px;
+                                    cursor: pointer;
+                                    font-size: 12px;
+                                `;
+                  deleteBtn.onclick = () => this.removeMarket(index);
+                  cell.appendChild(deleteBtn);
+                  break;
+              }
+
+              row.appendChild(cell);
+            });
+
+            tbody.appendChild(row);
+          });
+
+          this.updateStats(this.markets.length, openCount);
+        }
+
+        getMarketData(market) {
+          const marketTime = this.getMarketTime(market);
+          const isOpen = this.isMarketOpen(market);
+
+          return {
+            name: market.name,
+            isOpen: isOpen,
+            localOpenTime: this.getLocalTime(
+              market,
+              market.openHour,
+              market.openMinute
+            ),
+            localCloseTime: this.getLocalTime(
+              market,
+              market.closeHour,
+              market.closeMinute
+            ),
+            currentMarketTime: marketTime.toLocaleTimeString('en-US', {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: true
+            }),
+            timezone: market.timezone
+          };
+        }
+
+        getMarketTime(market) {
+          const now = new Date();
+          return new Date(
+            now.toLocaleString('en-US', { timeZone: market.timezone })
+          );
+        }
+
+        isMarketOpen(market) {
+          const marketTime = this.getMarketTime(market);
+          const currentDay = marketTime.getDay();
+          const currentHour = marketTime.getHours();
+          const currentMinute = marketTime.getMinutes();
+
+          if (!market.weekdays.includes(currentDay)) {
+            return false;
+          }
+
+          const currentTimeMinutes = currentHour * 60 + currentMinute;
+          const openTimeMinutes = market.openHour * 60 + market.openMinute;
+          const closeTimeMinutes = market.closeHour * 60 + market.closeMinute;
+
+          return (
+            currentTimeMinutes >= openTimeMinutes &&
+            currentTimeMinutes < closeTimeMinutes
+          );
+        }
+
+        getLocalTime(market, hour, minute) {
+          const now = new Date();
+          const marketDate = new Date(
+            now.toLocaleString('en-US', { timeZone: market.timezone })
+          );
+          marketDate.setHours(hour, minute, 0, 0);
+
+          const utcTime =
+            marketDate.getTime() + marketDate.getTimezoneOffset() * 60000;
+          const localTime = new Date(utcTime + now.getTimezoneOffset() * 60000);
+
+          return localTime.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          });
+        }
+
+        updateCurrentTime() {
+          const now = new Date();
+          const timeString = now.toLocaleString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            timeZoneName: 'short'
+          });
+          document.getElementById(
+            'currentTime'
+          ).textContent = `Current Time: ${timeString}`;
+        }
+
+        updateStats(total, open) {
+          document.getElementById('totalMarkets').textContent = total;
+          document.getElementById('openMarkets').textContent = open;
+          document.getElementById('closedMarkets').textContent = total - open;
+        }
+
+        addMarket(name, timezone, openTime, closeTime) {
+          if (!name || !timezone || !openTime || !closeTime) return false;
+
+          const [openHour, openMinute] = openTime.split(':').map(Number);
+          const [closeHour, closeMinute] = closeTime.split(':').map(Number);
+
+          const newMarket = {
+            name: name,
+            timezone: timezone,
+            openHour: openHour,
+            openMinute: openMinute,
+            closeHour: closeHour,
+            closeMinute: closeMinute,
+            weekdays: [1, 2, 3, 4, 5]
+          };
+
+          this.markets.push(newMarket);
+          this.updateTable();
+          return true;
+        }
+
+        removeMarket(index) {
+          this.markets.splice(index, 1);
+          this.updateTable();
+        }
+
+        clearAllMarkets() {
+          this.markets = [];
+          this.updateTable();
+        }
+
+        exportData() {
+          const data = this.markets.map(market => this.getMarketData(market));
+          const jsonData = JSON.stringify(data, null, 2);
+
+          const blob = new Blob([jsonData], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'market-data.json';
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+      }
+
+      // Initialize the application
+      let marketTable;
+
+      document.addEventListener('DOMContentLoaded', function () {
+        marketTable = new DynamicMarketTable();
+      });
+
+      // Global functions for UI controls
+      function addMarket() {
+        const name = document.getElementById('marketName').value.trim();
+        const timezone = document.getElementById('timezone').value.trim();
+        const openTime = document.getElementById('openTime').value;
+        const closeTime = document.getElementById('closeTime').value;
+
+        if (marketTable.addMarket(name, timezone, openTime, closeTime)) {
+          // Clear inputs
+          document.getElementById('marketName').value = '';
+          document.getElementById('timezone').value = '';
+          document.getElementById('openTime').value = '09:30';
+          document.getElementById('closeTime').value = '16:00';
+        } else {
+          alert('Please fill in all fields');
+        }
+      }
+
+      function clearAllMarkets() {
+        if (confirm('Are you sure you want to clear all markets?')) {
+          marketTable.clearAllMarkets();
+        }
+      }
+
+      function exportData() {
+        marketTable.exportData();
+      }
+    </script>
+  </body>
+</html>
