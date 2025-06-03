@@ -28,6 +28,9 @@ class YahooFinanceGapTrader:
     """Gap trading system using Yahoo Finance for data and Tiger Trade for execution"""
     
     def __init__(self, tiger_id: str = None, account: str = None, is_sandbox: bool = None):
+        # Initialize logging first to ensure logger is available for subsequent messages
+        self.setup_logging() 
+
         self.tiger_id = tiger_id or os.getenv('TIGER_ID')
         self.account = account or os.getenv('TIGER_ACCOUNT')
         # Ensure boolean parsing for IS_SANDBOX
@@ -57,7 +60,7 @@ class YahooFinanceGapTrader:
         self.scan_count = 0
         self.last_successful_trade = None
         self.total_trades_executed = 0
-        self.setup_logging()
+        
         try:
             import yfinance as yf
             self.yf = yf
