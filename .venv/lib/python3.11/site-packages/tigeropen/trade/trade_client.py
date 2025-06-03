@@ -1,0 +1,981 @@
+# -*- coding: utf-8 -*-
+"""
+Created on 2018/9/20
+
+@author: gaoan
+"""
+import logging
+
+from tigeropen.common.consts import THREAD_LOCAL, SecurityType, Market, Currency, Language, OPEN_API_SERVICE_VERSION_V3, \
+    SegmentType
+from tigeropen.common.consts.service_types import CONTRACTS, ACCOUNTS, POSITIONS, ASSETS, ORDERS, ORDER_NO, \
+    CANCEL_ORDER, MODIFY_ORDER, PLACE_ORDER, ACTIVE_ORDERS, INACTIVE_ORDERS, FILLED_ORDERS, CONTRACT, PREVIEW_ORDER, \
+    PRIME_ASSETS, ORDER_TRANSACTIONS, QUOTE_CONTRACT, ANALYTICS_ASSET, SEGMENT_FUND_AVAILABLE, SEGMENT_FUND_HISTORY, \
+    TRANSFER_FUND, \
+    TRANSFER_SEGMENT_FUND, CANCEL_SEGMENT_FUND, PLACE_FOREX_ORDER, ESTIMATE_TRADABLE_QUANTITY, AGGREGATE_ASSETS, \
+    FUND_DETAILS
+from tigeropen.common.exceptions import ApiException
+from tigeropen.common.util.common_utils import get_enum_value, date_str_to_timestamp
+from tigeropen.common.request import OpenApiRequest
+from tigeropen.tiger_open_client import TigerOpenClient
+from tigeropen.tiger_open_config import LANGUAGE
+from tigeropen.trade.domain.order import Order
+from tigeropen.trade.request.model import ContractParams, AccountsParams, AssetParams, PositionParams, OrdersParams, \
+    OrderParams, PlaceModifyOrderParams, CancelOrderParams, TransactionsParams, AnalyticsAssetParams, SegmentFundParams, \
+    ForexTradeOrderParams, EstimateTradableQuantityModel, FundingHistoryParams, AggregateAssetParams, FundDetailsParams
+from tigeropen.trade.response.account_profile_response import ProfilesResponse
+from tigeropen.trade.response.aggregate_assets_response import AggregateAssetsResponse
+from tigeropen.trade.response.analytics_asset_response import AnalyticsAssetResponse
+from tigeropen.trade.response.assets_response import AssetsResponse
+from tigeropen.trade.response.contracts_response import ContractsResponse
+from tigeropen.trade.response.forex_order_response import ForexOrderResponse
+from tigeropen.trade.response.fund_details_response import FundDetailsResponse
+from tigeropen.trade.response.order_id_response import OrderIdResponse
+from tigeropen.trade.response.order_preview_response import PreviewOrderResponse
+from tigeropen.trade.response.orders_response import OrdersResponse
+from tigeropen.trade.response.positions_response import PositionsResponse, EstimateTradableQuantityResponse
+from tigeropen.trade.response.prime_assets_response import PrimeAssetsResponse
+from tigeropen.trade.response.segment_fund_response import SegmentFundAvailableResponse, \
+    SegmentFundHistoryResponse, SegmentFundCancelResponse
+from tigeropen.trade.response.segment_fund_response import SegmentFundTransferResponse
+from tigeropen.trade.response.transactions_response import TransactionsResponse
+from tigeropen.trade.response.funding_history_response import FundingHistoryResponse
+
+
+class TradeClient(TigerOpenClient):
+    def __init__(self, client_config, logger=None):
+        if not logger:
+            logger = logging.getLogger('tiger_openapi')
+        super(TradeClient, self).__init__(client_config, logger=logger)
+        if client_config:
+            self._account = client_config.account
+            self._lang = client_config.language
+            self._secret_key = client_config.secret_key
+            self._timezone = client_config.timezone
+        else:
+            self._account = None
+            self._lang = LANGUAGE
+            self._secret_key = None
+            self._timezone = None
+
+    def get_managed_accounts(self, account=None):
+        """
+        获取管理的账号列表
+        :param account:
+        :return: AccountProfile 对象, 有如下属性：
+            account： 交易账户
+            capability： 账户类型(CASH:现金账户, MGRN: Reg T 保证金账户, PMGRN: 投资组合保证金)
+            status： 账户状态(New, Funded, Open, Pending, Abandoned, Rejected, Closed, Unknown)
+        """
+        params = AccountsParams()
+        if account:
+            params.account = account
+        params.lang = get_enum_value(self._lang)
+        params.secret_key = self._secret_key
+        request = OpenApiRequest(ACCOUNTS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = ProfilesResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.profiles
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def get_contracts(self, symbol, sec_type=SecurityType.STK, currency=None, exchange=None):
+        """
+        批量获取合约
+        :param symbol:
+        :param sec_type: 合约类型 tigeropen.common.consts.SecurityType
+        :param currency: 币种 tigeropen.common.consts.Currency
+        :param exchange: 交易所
+        :return: 合约对象列表, 每个列表项的对象信息同 get_contract 返回
+        """
+        params = ContractParams()
+        params.account = self._account
+        params.secret_key = self._secret_key
+        params.symbols = symbol if isinstance(symbol, list) else [symbol]
+        params.sec_type = get_enum_value(sec_type)
+        params.currency = get_enum_value(currency)
+        params.exchange = exchange
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(CONTRACTS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = ContractsResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.contracts
+            else:
+                raise ApiException(response.code, response.message)
+
+        return None
+
+    def get_contract(self, symbol, sec_type=SecurityType.STK, currency=None, exchange=None, expiry=None, strike=None,
+                     put_call=None):
+        """
+        获取合约
+        :param symbol:
+        :param sec_type: 合约类型 tigeropen.common.consts.SecurityType
+        :param currency: 币种 tigeropen.common.consts.Currency
+        :param exchange: 交易所
+        :param expiry: 合约到期日(期货/期权) yyyyMMdd
+        :param strike: 行权价(期权)
+        :param put_call: CALL/PUT
+        :return: Contract 对象. 有如下属性:
+            symbol: 合约 symbol
+            identifier: 合约唯一标识
+            currency: 币种
+            exchange: 交易所
+            name: 合约名称
+            sec_type: 合约类型
+            long_initial_margin: 做多初始保证金比例
+            long_maintenance_margin: 做多维持保证金比例
+            short_fee_rate: 做空费率
+            short_margin: 做空保证金
+            shortable: 做空池剩余
+            multiplier: 合约乘数
+            expiry: 合约到期日(期货/期权)
+            contract_month: 合约月份(期货)
+            strike: 行权价(期权)
+            put_call: 看跌/看涨(期权)
+        """
+        params = ContractParams()
+        params.account = self._account
+        params.secret_key = self._secret_key
+        params.symbol = symbol
+        params.sec_type = get_enum_value(sec_type)
+        params.currency = get_enum_value(currency)
+        params.lang = get_enum_value(self._lang)
+        params.version = OPEN_API_SERVICE_VERSION_V3
+        if expiry:
+            params.expiry = expiry
+        if strike:
+            params.strike = strike
+        if put_call:
+            params.right = put_call
+        params.exchange = exchange
+
+        request = OpenApiRequest(CONTRACT, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = ContractsResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.contracts[0] if len(response.contracts) == 1 else None
+            else:
+                raise ApiException(response.code, response.message)
+
+        return None
+
+    def get_derivative_contracts(self, symbol, sec_type, expiry, lang=None):
+        """
+
+        :param symbol:
+        :param sec_type: type of contract. tigeropen.common.consts.SecurityType. support: OPTION, WAR, IOPT
+        :param expiry: expiry date string, like '20220929'
+        :param lang:
+        :return: list of Contract
+        """
+        params = ContractParams()
+        params.symbols = symbol if isinstance(symbol, list) else [symbol]
+        params.sec_type = get_enum_value(sec_type)
+        params.expiry = expiry
+        params.lang = get_enum_value(lang) if lang else get_enum_value(self._lang)
+
+        request = OpenApiRequest(QUOTE_CONTRACT, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = ContractsResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.contracts
+            else:
+                raise ApiException(response.code, response.message)
+
+        return None
+
+    def get_positions(self, account=None, sec_type=SecurityType.STK, currency=Currency.ALL, market=Market.ALL,
+                      symbol=None, sub_accounts=None, expiry=None, strike=None, put_call=None, asset_quote_type=None):
+        """
+        获取持仓数据
+        :param account:
+        :param sec_type:
+        :param currency:
+        :param market:
+        :param symbol:
+        :param sub_accounts:
+        :param asset_quote_type: 资产行情模式
+        :return: 由 Position 对象构成的列表. Position 对象有如下属性:
+            account: 所属账户
+            contract: 合约对象
+            quantity: 持仓数量
+            average_cost: 持仓成本
+            market_price: 最新价格
+            market_value: 市值
+            realized_pnl: 实现盈亏
+            unrealized_pnl: 持仓盈亏
+        """
+        params = PositionParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.sec_type = get_enum_value(sec_type)
+        params.sub_accounts = sub_accounts
+        params.currency = get_enum_value(currency)
+        params.market = get_enum_value(market)
+        params.symbol = symbol
+        if expiry:
+            params.expiry = expiry
+        if strike:
+            params.strike = strike
+        if put_call:
+            params.right = put_call
+        if asset_quote_type:
+            params.asset_quote_type = get_enum_value(asset_quote_type)
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(POSITIONS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = PositionsResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.positions
+            else:
+                raise ApiException(response.code, response.message)
+
+        return None
+
+    def get_assets(self, account=None, sub_accounts=None, segment=False, market_value=False):
+        """
+        获取账户资产信息
+        :param account:
+        :param sub_accounts: 子账户列表
+        :param segment: 是否包含证券/期货分类
+        :param market_value: 是否包含分市场市值
+        :return: 由 PortfolioAccount 对象构成的列表. PortfolioAccount 对象下的 summary 属性包含一个 Account 对象，
+         Account 对象有如下属性：
+            net_liquidation: 净清算值
+            accrued_cash: 净累计利息
+            accrued_dividend: 净累计分红
+            available_funds: 可用资金(可用于交易)
+            accrued_interest: 累计利息
+            buying_power: 购买力
+            cash: 证券账户金额+期货账户金额
+            currency: 货币
+            cushion: 当前保证金缓存
+            day_trades_remaining: 剩余日内交易次数，-1表示无限制
+            equity_with_loan: 含借贷值股权
+            excess_liquidity: 当前结余流动性，为保持当前拥有的头寸，必须维持的缓冲保证金的数额，日内风险数值（App）
+            gross_position_value: 持仓市值
+            initial_margin_requirement: 初始保证金要求
+            maintenance_margin_requirement: 维持保证金要求
+            regt_equity: RegT 资产
+            regt_margin: RegT 保证金
+            sma: 特殊备忘录账户，隔夜风险数值（App）
+            settled_cash: 结算利息
+            leverage: 总杠杆
+            net_leverage: 净杠杆
+        """
+        params = AssetParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.sub_accounts = sub_accounts
+        params.segment = segment
+        params.market_value = market_value
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(ASSETS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = AssetsResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.assets
+            else:
+                raise ApiException(response.code, response.message)
+
+        return None
+
+    def get_prime_assets(self, account=None, base_currency=None, consolidated=True):
+        """
+        get prime account assets
+        :param account:
+        :param base_currency: tigeropen.common.consts.Currency, like Currency.USD
+        :return: tigeropen.trade.domain.prime_account.PortfolioAccount
+        """
+        params = AssetParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.lang = get_enum_value(self._lang)
+        params.base_currency = get_enum_value(base_currency)
+        params.consolidated = consolidated
+
+        request = OpenApiRequest(PRIME_ASSETS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = PrimeAssetsResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.assets
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def get_aggregate_assets(self, account=None, seg_type=SegmentType.SEC, base_currency=None):
+        params = AggregateAssetParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.lang = get_enum_value(self._lang)
+        params.base_currency = get_enum_value(base_currency)
+        params.seg_type = get_enum_value(seg_type)
+        request = OpenApiRequest(AGGREGATE_ASSETS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = AggregateAssetsResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.result
+            else:
+                raise ApiException(response.code, response.message)
+
+    def get_orders(self, account=None, sec_type=None, market=Market.ALL, symbol=None, start_time=None, end_time=None,
+                   limit=100, is_brief=False, states=None, sort_by=None, seg_type=None):
+        """
+        获取订单列表
+        :param account:
+        :param sec_type:
+        :param market:
+        :param symbol:
+        :param start_time: 开始时间(闭区间，包含). 若是时间戳需要精确到毫秒, 为13位整数；
+                                    或是日期时间格式的字符串，如"2017-01-01"和 "2017-01-01 12:00:00"
+        :param end_time: 截至时间(开区间，不包含). 格式同 start_time.
+        :param limit: 每次获取订单的数量
+        :param is_brief: 是否返回精简的订单数据
+        :param states: 订单状态枚举对象列表, 可选, 若传递则按状态筛选
+        :param sort_by: Field used to sort and filter start_time and end_time，available value can be imported from
+            tigeropen.common.consts.OrderSortBY, like LATEST_CREATED or LATEST_STATUS_UPDATED
+        :param seg_type: tigeropen.common.consts.SegmentType
+        :return: Order 对象构成的列表. Order 对象信息参见 tigeropen.trade.domain.order
+        """
+        params = OrdersParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.sec_type = get_enum_value(sec_type)
+        params.market = get_enum_value(market)
+        params.symbol = symbol
+        params.start_date = date_str_to_timestamp(start_time, self._timezone)
+        params.end_date = date_str_to_timestamp(end_time, self._timezone)
+        params.limit = limit
+        params.is_brief = is_brief
+        params.states = [get_enum_value(state) for state in states] if states else None
+        params.sort_by = get_enum_value(sort_by)
+        params.lang = get_enum_value(self._lang)
+        params.seg_type = get_enum_value(seg_type)
+        request = OpenApiRequest(ORDERS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = OrdersResponse()
+            response.parse_response_content(response_content, secret_key=params.secret_key)
+            if response.is_success():
+                return response.orders
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def get_open_orders(self, account=None, sec_type=None, market=Market.ALL, symbol=None, start_time=None,
+                        end_time=None, parent_id=None, sort_by=None, seg_type=None, **kwargs):
+        """
+        获取待成交订单列表. 参数同 get_orders
+        :param parent_id: 主订单 order_id
+        """
+        params = OrdersParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.sec_type = get_enum_value(sec_type)
+        params.market = get_enum_value(market)
+        params.symbol = symbol
+        params.start_date = date_str_to_timestamp(start_time, self._timezone)
+        params.end_date = date_str_to_timestamp(end_time, self._timezone)
+        params.parent_id = parent_id
+        params.sort_by = get_enum_value(sort_by)
+        params.lang = get_enum_value(self._lang)
+        params.seg_type = get_enum_value(seg_type)
+        if kwargs:
+            for key, value in kwargs.items():
+                setattr(params, key, value)
+        request = OpenApiRequest(ACTIVE_ORDERS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = OrdersResponse()
+            response.parse_response_content(response_content, secret_key=params.secret_key)
+            if response.is_success():
+                return response.orders
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def get_cancelled_orders(self, account=None, sec_type=None, market=Market.ALL, symbol=None, start_time=None,
+                             end_time=None, sort_by=None, seg_type=None, **kwargs):
+        """
+        获取已撤销订单列表. 参数同 get_orders
+        """
+        params = OrdersParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.sec_type = get_enum_value(sec_type)
+        params.market = get_enum_value(market)
+        params.symbol = symbol
+        params.start_date = date_str_to_timestamp(start_time, self._timezone)
+        params.end_date = date_str_to_timestamp(end_time, self._timezone)
+        params.sort_by = get_enum_value(sort_by)
+        params.lang = get_enum_value(self._lang)
+        params.seg_type = get_enum_value(seg_type)
+        if kwargs:
+            for key, value in kwargs.items():
+                setattr(params, key, value)
+        request = OpenApiRequest(INACTIVE_ORDERS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = OrdersResponse()
+            response.parse_response_content(response_content, secret_key=params.secret_key)
+            if response.is_success():
+                return response.orders
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def get_filled_orders(self, account=None, sec_type=None, market=Market.ALL, symbol=None, start_time=None,
+                          end_time=None, sort_by=None, seg_type=None, **kwargs):
+        """
+        获取已成交订单列表. 参数同 get_orders
+        """
+        params = OrdersParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.sec_type = get_enum_value(sec_type)
+        params.market = get_enum_value(market)
+        params.symbol = symbol
+        params.start_date = date_str_to_timestamp(start_time, self._timezone)
+        params.end_date = date_str_to_timestamp(end_time, self._timezone)
+        params.sort_by = get_enum_value(sort_by)
+        params.lang = get_enum_value(self._lang)
+        params.seg_type = get_enum_value(seg_type)
+        if kwargs:
+            for key, value in kwargs.items():
+                setattr(params, key, value)
+        request = OpenApiRequest(FILLED_ORDERS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = OrdersResponse()
+            response.parse_response_content(response_content, secret_key=params.secret_key)
+            if response.is_success():
+                return response.orders
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def get_order(self, account=None, id=None, order_id=None, is_brief=False, show_charges=None):
+        """
+        获取指定订单
+        :param account:
+        :param id:
+        :param order_id:
+        :param is_brief: 是否返回精简的订单数据
+        :return: Order 对象. 对象信息参见 tigeropen.trade.domain.order
+        """
+        params = OrderParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.id = id
+        params.order_id = order_id
+        params.is_brief = is_brief
+        params.show_charges = show_charges
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(ORDERS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = OrdersResponse()
+            response.parse_response_content(response_content, secret_key=params.secret_key)
+            if response.is_success():
+                return response.orders[0] if len(response.orders) == 1 else None
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def create_order(self, account, contract, action, order_type, quantity, limit_price=None, aux_price=None,
+                     trail_stop_price=None, trailing_percent=None, percent_offset=None, time_in_force=None,
+                     outside_rth=None, order_legs=None, algo_params=None, **kwargs):
+        """
+        创建订单对象.
+        :param account:
+        :param contract:
+        :param action:
+        :param order_type:
+        :param quantity:
+        :param limit_price: 限价
+        :param aux_price: 在止损单表示止损价格; 在跟踪止损单表示价差
+        :param trail_stop_price: 跟踪止损单--触发止损单的价格
+        :param trailing_percent: 跟踪止损单--百分比
+        :param percent_offset:
+        :param time_in_force: 订单有效期， 'DAY'（当日有效）和'GTC'（取消前有效)
+        :param outside_rth: 是否允许盘前盘后交易(美股专属)
+        :param order_legs: 附加订单
+        :param algo_params: 算法订单参数
+        """
+        params = AccountsParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(ORDER_NO, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = OrderIdResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                order_id = response.order_id
+                order = Order(account, contract, action, order_type, quantity, limit_price=limit_price,
+                              aux_price=aux_price, trail_stop_price=trail_stop_price,
+                              trailing_percent=trailing_percent, percent_offset=percent_offset,
+                              time_in_force=time_in_force, outside_rth=outside_rth, order_id=order_id,
+                              order_legs=order_legs, algo_params=algo_params, secret_key=params.secret_key, **kwargs)
+                return order
+            else:
+                raise ApiException(response.code, response.message)
+
+        return None
+
+    def preview_order(self, order):
+        """
+        预览订单
+        :param order:  Order 对象
+        :return: dict. 字段如下
+            init_margin_before      下单前账户初始保证金
+            init_margin             预计下单后的账户初始保证金
+            maint_margin_before     下单前账户的维持保证金
+            maint_margin            预计下单后的账户维持保证金
+            margin_currency         保证金货币币种
+            equity_with_loan_before 下单前账户的含借贷值股权(含贷款价值资产)
+            equity_with_loan        下单后账户的含借贷值股权(含贷款价值资产)
+            min_commission          预期最低佣金
+            max_commission          预期最高佣金
+            commission_currency     佣金货币币种
+
+            若无法下单, 返回的 dict 中仅有如下字段:
+            warning_text            无法下单的原因
+        """
+        params = PlaceModifyOrderParams()
+        params.account = order.account
+        params.contract = order.contract
+        params.action = order.action
+        params.order_type = order.order_type
+        params.order_id = order.order_id
+        params.quantity = order.quantity
+        params.quantity_scale = order.quantity_scale
+        params.limit_price = order.limit_price
+        params.aux_price = order.aux_price
+        params.trail_stop_price = order.trail_stop_price
+        params.trailing_percent = order.trailing_percent
+        params.percent_offset = order.percent_offset
+        params.time_in_force = order.time_in_force
+        params.outside_rth = order.outside_rth
+        params.secret_key = order.secret_key if order.secret_key else self._secret_key
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(PREVIEW_ORDER, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = PreviewOrderResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.preview_order
+            else:
+                raise ApiException(response.code, response.message)
+
+    def place_order(self, order):
+        """
+        下单
+        :param order:  Order 对象
+        :return: order's id
+        """
+        params = PlaceModifyOrderParams()
+        params.account = order.account
+        params.contract = order.contract
+        params.action = order.action
+        params.order_type = order.order_type
+        params.order_id = order.order_id
+        params.quantity = order.quantity
+        params.quantity_scale = order.quantity_scale
+        params.limit_price = order.limit_price
+        params.aux_price = order.aux_price
+        params.trail_stop_price = order.trail_stop_price
+        params.trailing_percent = order.trailing_percent
+        params.percent_offset = order.percent_offset
+        params.time_in_force = order.time_in_force
+        params.outside_rth = order.outside_rth
+        params.order_legs = order.order_legs
+        params.algo_params = order.algo_params
+        params.secret_key = order.secret_key if order.secret_key else self._secret_key
+        params.adjust_limit = order.adjust_limit
+        params.user_mark = order.user_mark
+        params.expire_time = order.expire_time
+        params.lang = get_enum_value(self._lang)
+        params.combo_type = get_enum_value(order.combo_type)
+        params.contract_legs = order.contract_legs
+        params.total_cash_amount = order.total_cash_amount
+        params.trading_session_type = get_enum_value(order.trading_session_type)
+
+        request = OpenApiRequest(PLACE_ORDER, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = OrderIdResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                order.id = response.id
+                order.sub_ids = response.sub_ids
+                order.orders = response.orders
+                if order.order_id is None and response.order_id:
+                    order.order_id = response.order_id
+                return response.id
+            else:
+                raise ApiException(response.code, response.message)
+
+    def modify_order(self, order, quantity=None, limit_price=None, aux_price=None,
+                     trail_stop_price=None, trailing_percent=None, percent_offset=None,
+                     time_in_force=None, outside_rth=None, **kwargs):
+        """
+        修改订单
+        :param order:
+        :param quantity:
+        :param limit_price: 限价
+        :param aux_price: 在止损单表示止损价格; 在跟踪止损单表示价差
+        :param trail_stop_price: 跟踪止损单--触发止损单的价格
+        :param trailing_percent: 跟踪止损单--百分比
+        :param percent_offset:
+        :param time_in_force: 订单有效期， 'DAY'（当日有效）和'GTC'（取消前有效)
+        :param outside_rth: 是否允许盘前盘后交易(美股专属)
+        :return: order's id
+        """
+        params = PlaceModifyOrderParams()
+        params.account = order.account
+        params.order_id = order.order_id
+        params.id = order.id
+        params.contract = order.contract
+        params.action = order.action
+        params.order_type = order.order_type
+        params.quantity = quantity if quantity is not None else order.quantity
+        params.quantity_scale = kwargs.get('quantity_scale', order.quantity_scale)
+        params.limit_price = limit_price if limit_price is not None else order.limit_price
+        params.aux_price = aux_price if aux_price is not None else order.aux_price
+        params.trail_stop_price = trail_stop_price if trail_stop_price is not None else order.trail_stop_price
+        params.trailing_percent = trailing_percent if trailing_percent is not None else order.trailing_percent
+        params.percent_offset = percent_offset if percent_offset is not None else order.percent_offset
+        params.time_in_force = time_in_force if time_in_force is not None else order.time_in_force
+        expire_time = kwargs.get('expire_time', order.expire_time)
+        if expire_time is not None:
+            params.expire_time = expire_time
+        params.outside_rth = outside_rth if outside_rth is not None else order.outside_rth
+        params.secret_key = order.secret_key if order.secret_key else self._secret_key
+        params.adjust_limit = kwargs.get('adjust_limit', order.adjust_limit)
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(MODIFY_ORDER, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = OrderIdResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.id
+            else:
+                raise ApiException(response.code, response.message)
+
+    def cancel_order(self, account=None, id=None, order_id=None):
+        """
+        取消订单
+        :param account:
+        :param id: 全局订单 id
+        :param order_id: 账户自增订单 id
+        :return: order's id
+        """
+        params = CancelOrderParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.order_id = order_id
+        params.id = id
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(CANCEL_ORDER, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = OrderIdResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.id
+            else:
+                raise ApiException(response.code, response.message)
+
+    def get_transactions(self, account=None, order_id=None, symbol=None, sec_type=None, start_time=None, end_time=None,
+                         limit=100, expiry=None, strike=None, put_call=None):
+        """
+        query order transactions, only prime accounts are supported.
+        :param account: account id. If not passed, the default account is used
+        :param order_id: order's id
+        :param symbol: symbol of contract, like 'AAPL', '00700', 'CL2201'
+        :param sec_type: security type. tigeropen.common.consts.SecurityType, like SecurityType.STK
+        :param start_time: timestamp in milliseconds, like 1641398400000
+        :param end_time: timestamp in milliseconds, like 1641398400000
+        :param limit: limit number of response
+        :param expiry: expiry date of Option. 'yyyyMMdd', like '220121'
+        :param strike: strike price of Option
+        :param put_call: Option right, PUT or CALL
+        :return:
+        """
+        params = TransactionsParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.order_id = order_id
+        params.sec_type = get_enum_value(sec_type)
+        params.symbol = symbol
+        params.start_date = date_str_to_timestamp(start_time, self._timezone)
+        params.end_date = date_str_to_timestamp(end_time, self._timezone)
+        params.limit = limit
+        params.expiry = expiry
+        params.strike = strike
+        params.right = put_call
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(ORDER_TRANSACTIONS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = TransactionsResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.transactions
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def get_analytics_asset(self, account=None, start_date=None, end_date=None, seg_type=None, currency=None,
+                            sub_account=None):
+        """
+        get analytics of history asset
+        :param account:
+        :param start_date: date str. format yyyyMMdd, like '2021-12-01'
+        :param end_date: date_str.
+        :param seg_type: tigeropen.common.consts.SegmentType, like SegmentType.SEC
+        :param currency: tigeropen.common.consts.Currency, like Currency.USD
+        :param sub_account: sub account of institution account
+        :return:
+        """
+        params = AnalyticsAssetParams()
+        params.account = account if account else self._account
+        params.secret_key = self._secret_key
+        params.seg_type = get_enum_value(seg_type)
+        params.start_date = start_date
+        params.end_date = end_date
+        params.currency = get_enum_value(currency)
+        params.sub_account = sub_account
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(ANALYTICS_ASSET, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = AnalyticsAssetResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.result
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def get_segment_fund_available(self, from_segment=None, currency=None):
+        """
+        get segment fund available
+        :return:
+        """
+        params = SegmentFundParams()
+        params.account = self._account
+        params.from_segment = get_enum_value(from_segment)
+        params.currency = get_enum_value(currency)
+        params.secret_key = self._secret_key
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(SEGMENT_FUND_AVAILABLE, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = SegmentFundAvailableResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.data
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def get_segment_fund_history(self, limit=None):
+        """
+        get segment fund history
+        :return:
+        """
+        params = SegmentFundParams()
+        params.account = self._account
+        params.limit = limit
+        params.secret_key = self._secret_key
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(SEGMENT_FUND_HISTORY, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = SegmentFundHistoryResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.data
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def transfer_segment_fund(self, from_segment=None, to_segment=None, amount=None, currency=None):
+        """
+        transfer segment fund
+        :param from_segment: FUT 期货； SEC 股票。可用枚举 tigeropen.common.consts.SegmentType
+        :param to_segment:
+        :param amount:
+        :param currency:
+        :return:
+        """
+        params = SegmentFundParams()
+        params.account = self._account
+        params.secret_key = self._secret_key
+        params.from_segment = get_enum_value(from_segment)
+        params.to_segment = get_enum_value(to_segment)
+        params.amount = amount
+        params.currency = get_enum_value(currency)
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(TRANSFER_SEGMENT_FUND, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = SegmentFundTransferResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.data
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def cancel_segment_fund(self, id=None):
+        """
+        cancel segment fund
+        :param id:
+        :return:
+        """
+        params = SegmentFundParams()
+        params.account = self._account
+        params.secret_key = self._secret_key
+        params.id = id
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(CANCEL_SEGMENT_FUND, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = SegmentFundCancelResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.data
+            else:
+                raise ApiException(response.code, response.message)
+
+    def place_forex_order(self, seg_type, source_currency, target_currency, source_amount):
+        """
+        place forex order
+        :param seg_type:
+        :param source_currency:
+        :param target_currency:
+        :param source_amount:
+        :return:
+        """
+        params = ForexTradeOrderParams()
+        params.account = self._account
+        params.secret_key = self._secret_key
+        params.seg_type = get_enum_value(seg_type)
+        params.source_currency = get_enum_value(source_currency)
+        params.target_currency = get_enum_value(target_currency)
+        params.source_amount = source_amount
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(PLACE_FOREX_ORDER, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = ForexOrderResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.data
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def get_estimate_tradable_quantity(self, order, seg_type=None):
+        params = EstimateTradableQuantityModel()
+        params.account = self._account
+        params.secret_key = self._secret_key
+        params.lang = get_enum_value(self._lang)
+        params.contract = order.contract
+        params.order_type = order.order_type
+        params.action = order.action
+        params.limit_price = order.limit_price
+        params.stop_price = order.aux_price
+        params.seg_type = get_enum_value(seg_type)
+
+        request = OpenApiRequest(ESTIMATE_TRADABLE_QUANTITY, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = EstimateTradableQuantityResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.result
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+    
+    def get_funding_history(self, seg_type=None):
+        params = FundingHistoryParams()
+        params.account = self._account
+        params.secret_key = self._secret_key
+        params.seg_type = get_enum_value(seg_type)
+        params.lang = get_enum_value(self._lang)
+        request = OpenApiRequest(TRANSFER_FUND, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = FundingHistoryResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.result
+            else:
+                raise ApiException(response.code, response.message)
+        return None
+
+    def get_fund_details(self, seg_types, account=None, fund_type=None, currency=None,
+                         start=0, limit=None, start_date=None, end_date=None, secret_key=None,
+                         lang=None):
+        params = FundDetailsParams()
+        params.account = account if account else self._account
+        params.secret_key = secret_key if secret_key else self._secret_key
+        if seg_types:
+            seg_types_list = seg_types if isinstance(seg_types, list) else [seg_types]
+            seg_types_params = [get_enum_value(t) for t in seg_types_list]
+            params.seg_types = seg_types_params
+        params.fund_type = get_enum_value(fund_type)
+        params.currency = get_enum_value(currency)
+        params.start = start
+        params.limit = limit
+        params.start_date = start_date
+        params.end_date = end_date
+        params.lang = get_enum_value(lang) if lang else get_enum_value(self._lang)
+
+        request = OpenApiRequest(FUND_DETAILS, biz_model=params)
+        response_content = self.__fetch_data(request)
+        if response_content:
+            response = FundDetailsResponse()
+            response.parse_response_content(response_content)
+            if response.is_success():
+                return response.result
+            else:
+                raise ApiException(response.code, response.message)
+
+
+    def __fetch_data(self, request):
+        try:
+            response = super(TradeClient, self).execute(request)
+            return response
+        except Exception as e:
+            if THREAD_LOCAL.logger:
+                THREAD_LOCAL.logger.error(e, exc_info=True)
+            raise e

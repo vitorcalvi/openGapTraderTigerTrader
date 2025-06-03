@@ -1,0 +1,2 @@
+[console_scripts]
+propconv = jproperties:main

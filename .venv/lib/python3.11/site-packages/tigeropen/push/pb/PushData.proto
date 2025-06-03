@@ -1,0 +1,32 @@
+syntax = "proto3";
+import public "tigeropen/push/pb/SocketCommon.proto";
+import public "tigeropen/push/pb/OrderStatusData.proto";
+import public "tigeropen/push/pb/PositionData.proto";
+import public "tigeropen/push/pb/AssetData.proto";
+import public "tigeropen/push/pb/QuoteData.proto";
+import public "tigeropen/push/pb/QuoteDepthData.proto";
+import public "tigeropen/push/pb/TradeTickData.proto";
+import public "tigeropen/push/pb/OrderTransactionData.proto";
+import public "tigeropen/push/pb/StockTopData.proto";
+import public "tigeropen/push/pb/OptionTopData.proto";
+import public "tigeropen/push/pb/KlineData.proto";
+import public "tigeropen/push/pb/TickData.proto";
+
+package tigeropen.push.pb;
+
+message PushData {
+  SocketCommon.DataType dataType = 1;
+  oneof body {
+    QuoteData quoteData = 2;
+    QuoteDepthData quoteDepthData = 3;
+    TradeTickData tradeTickData = 4;
+    PositionData positionData = 5;
+    AssetData assetData = 6;
+    OrderStatusData orderStatusData = 7;
+    OrderTransactionData orderTransactionData = 8;
+    StockTopData stockTopData = 9;
+    OptionTopData optionTopData = 10;
+    KlineData klineData = 11;
+    TickData tickData = 12;
+  }
+}
