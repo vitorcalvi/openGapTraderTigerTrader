@@ -3,3 +3,15 @@ modules = ["python-3.12"]
 [nix]
 channel = "stable-24_05"
 packages = ["glibcLocales"]
+
+[workflows]
+runButton = "Run Web Server"
+
+[[workflows.workflow]]
+name = "Run Web Server"
+author = 8584913
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python web_server.py"
